@@ -2,6 +2,10 @@
 
 VoterPath is an election information assistant for Andhra Pradesh, built with a FastAPI backend and a static frontend.
 
+## GitHub Repository
+
+- **Repository:** [https://github.com/deepsi43/Voterpath](https://github.com/deepsi43/Voterpath)
+
 ## Live Demo (Cloud Run URL - Mandatory)
 
 Replace this with your deployed public URL before submission:
@@ -50,6 +54,14 @@ gcloud run deploy voterpath \
 - [ ] `DEPLOY_CLOUD_RUN.md` steps are accurate for your final deployment.
 - [ ] No secrets committed (`.env`, API keys, credentials).
 - [ ] Optional: Add screenshots/GIF of app in action.
+
+## Final Submission Checklist
+
+- [x] GitHub repository created and pushed.
+- [x] Deployment steps documented in `DEPLOY_CLOUD_RUN.md`.
+- [x] Prompting logic documented in `PROMPTING_LOGIC.md`.
+- [ ] Cloud Run service deployed and public URL added.
+- [ ] LinkedIn story posted with required tags.
 
 ## LinkedIn Story (Submission Ready Template)
 

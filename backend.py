@@ -2,6 +2,8 @@ import os
 import time
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -91,16 +93,70 @@ def scrape_wikipedia_profile(name: str) -> str:
 api_key = os.getenv("GEMINI_API_KEY")
 llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite", google_api_key=api_key)
 
+SCRAPER_USER_AGENT = "VoterPathBot/1.0 (+https://github.com/deepsi43/Voterpath)"
+
+
+def _is_scraping_allowed(url: str, user_agent: str = SCRAPER_USER_AGENT) -> bool:
+    """Respect robots.txt rules before scraping."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        robots_url = urljoin(f"{parsed.scheme}://{parsed.netloc}", "/robots.txt")
+        robots_resp = requests.get(robots_url, headers={"User-Agent": user_agent}, timeout=5)
+        if robots_resp.status_code >= 400:
+            # If robots.txt is unavailable, proceed cautiously with a single request.
+            return True
+        rp = RobotFileParser()
+        rp.parse(robots_resp.text.splitlines())
+        return rp.can_fetch(user_agent, url)
+    except Exception:
+        # Fail open to avoid blocking common sites that throttle robots.txt.
+        return True
+
+
+def _extract_page_text(html: bytes, max_chars: int = 6000) -> str:
+    """Primary extraction with semantic tags, fallback to full body text."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.extract()
+
+    preferred_blocks = []
+    for selector in ("article", "main"):
+        preferred_blocks.extend(soup.select(selector))
+
+    if preferred_blocks:
+        text = " ".join(block.get_text(separator=" ", strip=True) for block in preferred_blocks)
+    else:
+        text = soup.get_text(separator=" ", strip=True)
+
+    cleaned = " ".join(text.split())
+    return cleaned[:max_chars]
+
+
 @tool
 def tinyfish_scraper(url: str) -> str:
-    """Scrapes a URL and returns its text content."""
+    """Scrapes URL text with a robots-aware fallback parser."""
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        if not _is_scraping_allowed(url):
+            return "Error: Scraping disallowed by robots.txt policy for this URL."
+
+        headers = {"User-Agent": SCRAPER_USER_AGENT}
         r = requests.get(url, headers=headers, timeout=8)
         r.raise_for_status()
-        soup = BeautifulSoup(r.content, "html.parser")
-        for tag in soup(["script", "style"]): tag.extract()
-        text = soup.get_text(separator=" ")
+
+        primary = _extract_page_text(r.content, max_chars=6000)
+        if len(primary) >= 500:
+            return primary
+
+        # Traditional fallback parse (single polite retry, no aggressive crawling).
+        time.sleep(0.4)
+        fallback = requests.get(url, headers=headers, timeout=10)
+        fallback.raise_for_status()
+        fallback_soup = BeautifulSoup(fallback.content, "html.parser")
+        for tag in fallback_soup(["script", "style", "noscript"]):
+            tag.extract()
+        text = fallback_soup.get_text(separator=" ")
         lines = (l.strip() for l in text.splitlines())
         chunks = (p.strip() for l in lines for p in l.split("  "))
         return "\n".join(c for c in chunks if c)[:6000]

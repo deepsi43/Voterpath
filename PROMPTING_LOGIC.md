@@ -52,6 +52,14 @@ This enables retrieval-augmented responses instead of pure model memory.
 - Informative fallback messaging for temporary failures.
 - Tool exceptions captured and returned as explicit error strings.
 
+## Responsible Scraping Policy
+
+- `tinyfish_scraper` checks `robots.txt` before attempting extraction.
+- Uses a transparent product user-agent (`VoterPathBot/1.0`).
+- Performs single-page retrieval only (no recursive crawling).
+- Uses a bounded, traditional HTML-text fallback parser when primary extraction is weak.
+- Returns explicit errors when scraping is disallowed by site policy.
+
 ## Known Limitations
 
 - Scraped sources can change page structure unexpectedly.

@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage, HumanMessage
@@ -41,20 +43,69 @@ if not api_key:
     st.error("Please configure your GEMINI_API_KEY in the .env file.")
     st.stop()
 
+SCRAPER_USER_AGENT = "VoterPathBot/1.0 (+https://github.com/deepsi43/Voterpath)"
+
+
+def _is_scraping_allowed(url: str, user_agent: str = SCRAPER_USER_AGENT) -> bool:
+    """Respect robots.txt rules before scraping."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        robots_url = urljoin(f"{parsed.scheme}://{parsed.netloc}", "/robots.txt")
+        robots_resp = requests.get(robots_url, headers={"User-Agent": user_agent}, timeout=5)
+        if robots_resp.status_code >= 400:
+            return True
+        rp = RobotFileParser()
+        rp.parse(robots_resp.text.splitlines())
+        return rp.can_fetch(user_agent, url)
+    except Exception:
+        return True
+
+
+def _extract_page_text(html: bytes, max_chars: int = 8000) -> str:
+    """Primary extraction with semantic tags, fallback to full body text."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.extract()
+
+    preferred_blocks = []
+    for selector in ("article", "main"):
+        preferred_blocks.extend(soup.select(selector))
+
+    if preferred_blocks:
+        text = " ".join(block.get_text(separator=" ", strip=True) for block in preferred_blocks)
+    else:
+        text = soup.get_text(separator=" ", strip=True)
+
+    cleaned = " ".join(text.split())
+    return cleaned[:max_chars]
+
+
 @tool
 def tinyfish_scraper(url: str) -> str:
-    """Scrapes the content of a given URL returning the text. Useful for extracting details from a politician profile page."""
+    """Scrapes URL text with a robots-aware fallback parser."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        if not _is_scraping_allowed(url):
+            return "Error scraping: Scraping disallowed by robots.txt policy for this URL."
+
+        headers = {"User-Agent": SCRAPER_USER_AGENT}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-        for script_or_style in soup(['script', 'style']):
-            script_or_style.extract()
-        text = soup.get_text(separator=' ')
+
+        primary = _extract_page_text(response.content, max_chars=8000)
+        if len(primary) >= 500:
+            return primary
+
+        fallback = requests.get(url, headers=headers, timeout=12)
+        fallback.raise_for_status()
+        fallback_soup = BeautifulSoup(fallback.content, "html.parser")
+        for tag in fallback_soup(["script", "style", "noscript"]):
+            tag.extract()
+        text = fallback_soup.get_text(separator=" ")
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        return '\n'.join(chunk for chunk in chunks if chunk)[:8000]
+        return "\n".join(chunk for chunk in chunks if chunk)[:8000]
     except Exception as e:
         return f"Error scraping: {str(e)}"
 
